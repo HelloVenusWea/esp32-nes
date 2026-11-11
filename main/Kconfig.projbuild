@@ -1,0 +1,30 @@
+menu "ESP32-NES"
+
+    config NES_AP_SSID_PREFIX
+        string "SoftAP SSID prefix"
+        default "NES"
+        help
+            The AP name is <prefix>-XXXX where XXXX is derived from the MAC.
+
+    config NES_AP_PASSWORD
+        string "SoftAP password (at least 8 characters)"
+        default "nes12345"
+
+    config NES_AP_CHANNEL
+        int "SoftAP channel"
+        range 1 13
+        default 6
+
+    config NES_WIFI_SSID
+        string "Default home Wi-Fi SSID (optional, 2.4GHz)"
+        default ""
+        help
+            If non-empty and no credentials were saved through the web page,
+            the device joins this network at boot. Credentials entered on the
+            provisioning page are stored in NVS and take precedence.
+
+    config NES_WIFI_PASSWORD
+        string "Default home Wi-Fi password"
+        default ""
+
+endmenu

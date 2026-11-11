@@ -1,0 +1,20 @@
+build/
+build_headless/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+*.log
+.vscode/
+.idea/
+tools/NES-F905.xml
+tools/cache/
+tv-app/build/
+tv-app/*.keystore
+*.idsig
+
+# Never commit ROMs to the public tree
+*.nes
+main/assets/*.nes
+
+# Local/release build outputs
+dist/

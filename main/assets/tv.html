@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<link rel="icon" href="data:,">
+<title>ESP32-NES · 电视模式</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #000; color: #ddd; font-family: system-ui, "Microsoft YaHei", sans-serif; overflow: hidden; }
+  #stage { position: fixed; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; }
+  #cv { image-rendering: pixelated; background: #111; border: 2px solid #222; border-radius: 6px; }
+  #bar { display: flex; gap: 10px; align-items: center; font-size: 14px; flex-wrap: wrap; justify-content: center; padding: 0 8px; }
+  select, button { background: #1b212a; color: #e8eaed; border: 1px solid #333c48; border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+  button { cursor: pointer; font-weight: 600; }
+  button:hover { border-color: #8ab4f8; }
+  #hint { position: fixed; left: 10px; bottom: 8px; color: #666; font-size: 12px; max-width: 70vw; line-height: 1.5; }
+  #hint a { color: #8ab4f8; }
+  #pad { position: fixed; bottom: 12px; width: 100%; display: none; justify-content: space-between; padding: 0 14px; pointer-events: none; }
+  #pad .grp { display: flex; gap: 10px; pointer-events: auto; }
+  #pad button { width: 64px; height: 64px; border-radius: 50%; background: #1b212ae6; border: 2px solid #3a4553; font-size: 18px; touch-action: none; }
+  #pad button:active { background: #8ab4f8; color: #0b1020; }
+  @media (pointer: coarse) { #pad { display: flex; } }
+  #gate { position: fixed; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,.92); display: none; align-items: center; justify-content: center; flex-direction: column; gap: 22px; z-index: 10; }
+  #gate .t { font-size: 20px; color: #8b97ad; }
+  #gate .r { font-size: 34px; color: #e8edf7; }
+  #gatebtn { font-size: 26px; padding: 18px 40px; border-radius: 14px; }
+  #perf { position: fixed; left: 8px; top: 6px; z-index: 20; color: #9fe8ff; background: rgba(0,0,0,.55); font: 16px monospace; padding: 5px 8px; border-radius: 4px; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv" width="256" height="240"></canvas>
+  <div id="bar">
+    <select id="roms"><option value="">加载中…</option></select>
+    <button id="start">▶ 开始</button>
+    <button id="fs">⛶ 全屏</button>
+    <span id="stat"></span>
+    <span id="padstat" style="color:#e5c07b">ESP32 手柄：连接中…</span>
+  </div>
+</div>
+<div id="pad">
+  <div class="grp">
+    <button data-k="LEFT">◀</button><button data-k="UP">▲</button><button data-k="DOWN">▼</button><button data-k="RIGHT">▶</button>
+  </div>
+  <div class="grp">
+    <button data-k="SELECT">选择</button><button data-k="B">B</button><button data-k="A">A</button><button data-k="START">开始</button>
+  </div>
+</div>
+<div id="perf">-- fps</div>
+<div id="gate">
+  <div class="t">ESP32-NES TV</div>
+  <div class="r" id="gaterom"></div>
+  <button id="gatebtn">▶ 按 OK 开始</button>
+</div>
+<div id="hint">
+  手柄保持连接 **ESP32**，按键由 ESP32 通过 WebSocket 转发到本页；电脑/电视只负责画面和声音。<br>
+  键盘也可用：方向键 + Z(A) X(B) Enter(Start) Shift(Select) · ROM 由 ESP32 提供 · <a href="/">返回管理页</a>
+</div>
+<script src="/jsnes.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const autoRom = params.get('rom');
+const gateMode = params.get('gate') === '1';
+const kiosk = params.get('kiosk') === '1';
+const cv = $('cv');
+let gl = null, ctx2d = null, img = null, glProg = null, glTex = null, glBuf = null, rgba = null;
+let frameCount = 0, lastFpsTime = performance.now();
+
+function shader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+function initRenderer() {
+  const probe = document.createElement('canvas');
+  let testGl = null;
+  try { testGl = probe.getContext('webgl'); } catch (e) { testGl = null; }
+  if (testGl) {
+    try {
+      gl = cv.getContext('webgl', { alpha:false, antialias:false, depth:false, stencil:false });
+      const vs = 'attribute vec2 a; varying vec2 v; void main(){v=vec2(a.x*0.5+0.5,0.5-a.y*0.5); gl_Position=vec4(a,0.0,1.0);}';
+      const fs = 'precision mediump float; varying vec2 v; uniform sampler2D u; void main(){gl_FragColor=texture2D(u,v);}';
+      glProg = gl.createProgram();
+      gl.attachShader(glProg, shader(gl.VERTEX_SHADER, vs));
+      gl.attachShader(glProg, shader(gl.FRAGMENT_SHADER, fs));
+      gl.linkProgram(glProg);
+      if (!gl.getProgramParameter(glProg, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(glProg));
+      gl.useProgram(glProg);
+      glBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, glBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(glProg, 'a');
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      glTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, glTex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 240, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.viewport(0, 0, 256, 240);
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      rgba = new Uint8Array(256 * 240 * 4);
+    } catch (e) {
+      console.warn('WebGL failed, using 2D', e);
+      gl = null;
+    }
+  }
+  if (!gl) {
+    ctx2d = cv.getContext('2d');
+    img = ctx2d.createImageData(256, 240);
+  }
+}
+function drawFrame(fb) {
+  if (gl) {
+    for (let i = 0, p = 0; i < 256 * 240; i++, p += 4) {
+      const v = fb[i];
+      rgba[p] = (v >> 16) & 0xff;
+      rgba[p + 1] = (v >> 8) & 0xff;
+      rgba[p + 2] = v & 0xff;
+      rgba[p + 3] = 0xff;
+    }
+    gl.bindTexture(gl.TEXTURE_2D, glTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, 240, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  } else {
+    const d = img.data;
+    for (let i = 0, p = 0; i < 256 * 240; i++, p += 4) {
+      const v = fb[i];
+      d[p] = (v >> 16) & 0xff; d[p + 1] = (v >> 8) & 0xff; d[p + 2] = v & 0xff; d[p + 3] = 0xff;
+    }
+    ctx2d.putImageData(img, 0, 0);
+  }
+}
+initRenderer();
+setInterval(() => {
+  const now = performance.now();
+  const fps = frameCount * 1000 / Math.max(1, now - lastFpsTime);
+  frameCount = 0;
+  lastFpsTime = now;
+  $('perf').textContent = fps.toFixed(0) + ' fps · ' + (gl ? 'WebGL' : '2D') + ' · '
+    + (audioCtx ? audioCtx.state : 'noaudio') + ' · ' + (cv.style.width || '?');
+}, 1000);
+let nes = null, running = false;
+let audioCtx = null, scriptNode = null;
+
+const BITS = { A:1, B:2, SELECT:4, START:8, UP:16, DOWN:32, LEFT:64, RIGHT:128 };
+const KEYS = ['UP','DOWN','LEFT','RIGHT','A','B','START','SELECT'];
+const srcKey = {}, srcPad = {}, srcTouch = {}, state = {};
+function btnDown(b) { if (nes) nes.buttonDown(1, jsnes.Controller['BUTTON_' + b]); }
+function btnUp(b) { if (nes) nes.buttonUp(1, jsnes.Controller['BUTTON_' + b]); }
+function sync() {
+  for (const k of KEYS) {
+    const on = !!(srcKey[k] || srcPad[k] || srcTouch[k]);
+    if (on && !state[k]) { btnDown(k); state[k] = 1; }
+    else if (!on && state[k]) { btnUp(k); state[k] = 0; }
+  }
+}
+const keymap = { ArrowUp:'UP', ArrowDown:'DOWN', ArrowLeft:'LEFT', ArrowRight:'RIGHT', z:'A', Z:'A', x:'B', X:'B', Enter:'START', Shift:'SELECT' };
+window.addEventListener('keydown', e => { const k = keymap[e.key]; if (k) { srcKey[k] = 1; sync(); e.preventDefault(); } });
+window.addEventListener('keyup', e => { const k = keymap[e.key]; if (k) { srcKey[k] = 0; sync(); e.preventDefault(); } });
+document.querySelectorAll('#pad button').forEach(el => {
+  const k = el.dataset.k;
+  const down = e => { if (e) e.preventDefault(); srcTouch[k] = 1; sync(); };
+  const up = e => { if (e) e.preventDefault(); srcTouch[k] = 0; sync(); };
+  el.addEventListener('touchstart', down, { passive: false });
+  el.addEventListener('touchend', up, { passive: false });
+  el.addEventListener('mousedown', down);
+  el.addEventListener('mouseup', up);
+});
+
+/* ESP32 forwards the BLE gamepad state as 2 bytes: [padMask, connected]. */
+let ws = null;
+function connectPad() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(proto + '://' + location.host + '/ws/pad');
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => {
+    $('padstat').textContent = 'ESP32 手柄通道已连接';
+    ws.send('start');
+  };
+  ws.onmessage = e => {
+    const d = new Uint8Array(e.data);
+    const mask = d[0] || 0;
+    const connected = d.length > 1 && d[1] === 1;
+    for (const k of KEYS) srcPad[k] = !!(mask & BITS[k]);
+    sync();
+    const el = $('padstat');
+    el.textContent = connected ? 'ESP32 手柄：已连接' : 'ESP32 手柄：未连接（请开机/配对）';
+    el.style.color = connected ? '#7ee787' : '#e06c75';
+  };
+  ws.onclose = () => {
+    for (const k of KEYS) srcPad[k] = 0;
+    sync();
+    $('padstat').textContent = 'ESP32 通道断开，重连中…';
+    $('padstat').style.color = '#e5c07b';
+    setTimeout(connectPad, 2000);
+  };
+  ws.onerror = () => { if (ws) ws.close(); };
+}
+
+function onFrame(fb) {
+  frameCount++;
+  drawFrame(fb);
+}
+const ringL = new Float32Array(65536), ringR = new Float32Array(65536);
+let ringW = 0, ringC = 0;
+function onAudioSample(l, r) {
+  ringL[ringW & 65535] = l; ringR[ringW & 65535] = r; ringW++;
+  if (ringW - ringC > 60000) ringC = ringW - 60000;
+}
+function audioInit() {
+  if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  scriptNode = audioCtx.createScriptProcessor(2048, 0, 2);
+  scriptNode.onaudioprocess = e => {
+    const l = e.outputBuffer.getChannelData(0), r = e.outputBuffer.getChannelData(1);
+    for (let i = 0; i < l.length; i++) {
+      if (ringC < ringW) { l[i] = ringL[ringC & 65535]; r[i] = ringR[ringC & 65535]; ringC++; }
+      else { l[i] = 0; r[i] = 0; }
+    }
+  };
+  scriptNode.connect(audioCtx.destination);
+}
+function audioUnlock() {
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+window.addEventListener('keydown', audioUnlock);
+window.addEventListener('pointerdown', audioUnlock);
+function fitCanvas() {
+  const reserve = kiosk ? 0 : 90;
+  const maxW = window.innerWidth - 8, maxH = window.innerHeight - reserve;
+  const s = Math.max(1, Math.floor(Math.min(maxW / 256, maxH / 240)));
+  cv.style.width = (256 * s) + 'px'; cv.style.height = (240 * s) + 'px';
+}
+window.addEventListener('resize', fitCanvas); fitCanvas();
+function setStat(t) { $('stat').textContent = t; }
+
+async function loadRoms() {
+  try {
+    const data = await (await fetch('/api/roms', { cache: 'no-store' })).json();
+    const list = data.roms || [];
+    const sel = $('roms'); sel.innerHTML = '';
+    if (!list.length) { sel.innerHTML = '<option value="">设备上没有 ROM</option>'; return; }
+    for (const r of list) {
+      const o = document.createElement('option');
+      o.value = r.name;
+      o.textContent = r.name;
+      sel.appendChild(o);
+    }
+    afterRoms();
+  } catch (e) {
+    $('roms').innerHTML = '<option value="">ROM 列表获取失败</option>';
+  }
+}
+
+function afterRoms() {
+  if (kiosk) {
+    $('bar').style.display = 'none';
+    $('hint').style.display = 'none';
+  }
+  if (autoRom) {
+    const sel = $('roms');
+    for (const o of sel.options) {
+      if (o.value === autoRom) { sel.value = autoRom; break; }
+    }
+  }
+  if (gateMode) {
+    $('gaterom').textContent = $('roms').value || '未找到 ROM';
+    $('gate').style.display = 'flex';
+    $('gatebtn').focus();
+  } else if (autoRom) {
+    startGame();
+  }
+}
+
+$('gatebtn').addEventListener('click', () => {
+  $('gate').style.display = 'none';
+  startGame();
+});
+
+function applyRgbPalette() {
+  // jsnes's bundled NTSC table is BGR (its canvas path expects ABGR), while
+  // our WebGL renderer uploads RGBA. Use the RGB default palette instead.
+  if (nes.ppu.palTable.loadDefaultPalette) {
+    nes.ppu.palTable.loadDefaultPalette();
+  }
+  // Match InfoNES on the 2.4" screen: it does not apply PPU color emphasis.
+  nes.ppu.palTable.setEmphasis = function () {};
+}
+
+async function startGame() {
+  $('gate').style.display = 'none';
+  const file = $('roms').value;
+  if (!file) { alert('请先选择 ROM'); return; }
+  try { audioInit(); } catch (e) { console.warn('audio init failed', e); }
+  running = false;
+  setStat('加载中…');
+  try {
+    const ab = await (await fetch('/api/rom/file?name=' + encodeURIComponent(file))).arrayBuffer();
+    let s = '';
+    const u8 = new Uint8Array(ab);
+    for (let i = 0; i < u8.length; i += 8192) {
+      s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + 8192, u8.length)));
+    }
+    nes = new jsnes.NES({ onFrame, onAudioSample, sampleRate: 44100 });
+    nes.loadROM(s);
+    applyRgbPalette();
+    running = true;
+    loop();
+    setStat('运行中：' + file);
+  } catch (e) {
+    setStat('加载失败：' + e);
+    $('gaterom').textContent = '加载失败：' + e;
+    $('gate').style.display = 'flex';
+    alert('ROM 加载失败：' + e);
+  }
+}
+function loop() {
+  if (!running) return;
+  try { nes.frame(); } catch (e) { running = false; setStat('模拟器错误'); return; }
+  requestAnimationFrame(loop);
+}
+$('start').addEventListener('click', startGame);
+$('fs').addEventListener('click', () => {
+  const el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen();
+});
+loadRoms();
+connectPad();
+</script>
+</body>
+</html>
