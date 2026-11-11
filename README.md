@@ -1,6 +1,6 @@
 # ESP32-NES
 
-独立运行在 **正点原子 ATK-DNESP32S3**（ESP32-S3 / 16 MB Flash / 8 MB Octal PSRAM）上的 NES 模拟器固件。
+独立运行在 **ESP32-S3**（双核 240 MHz / 16 MB Flash / 8 MB Octal PSRAM）上的 NES 模拟器固件。
 不依赖小智（xiaozhi）框架，开机进入 ROM 列表，屏幕直绘 + ES8388 出声 + BLE 手柄操作；ROM 通过局域网网页上传。
 
 > 本公开仓库不包含任何 NES ROM。请通过网页上传你合法持有的 `.nes` 文件。
@@ -54,8 +54,9 @@
 
 ## 硬件
 
-| 模块 | 引脚 |
+| 模块 | 说明 / 引脚 |
 |---|---|
+| 主控 | **ESP32-S3**，双核 240 MHz，16 MB Flash，8 MB Octal PSRAM |
 | ST7789 2.4" 320×240 | SCLK=12, MOSI=11, DC=40, CS=21, 复位/背光经 XL9555 |
 | ES8388 | MCLK=3, BCLK=46, WS=9, DOUT=10, DIN=14；I2C SDA=41, SCL=42 |
 | XL9555 | I2C 0x20；P1_0 背光使能，P0_2 屏复位 |
@@ -210,7 +211,7 @@ idf.py -B build_headless -p COMx flash
   `http://192.168.4.1/` 配网；配好后串口会打印 `ready on LAN: http://<IP>/`。
 - 没有屏幕显示 IP：可看串口、路由器 DHCP 列表，或直接用 Android TV APK 的 UDP 自动发现。
 - 无本地屏幕/音频，`/api/play` 的本地启动会被忽略；请用 `/stream` 页面或 Android TV APK 游玩。
-- 这是独立构建目录 `build_headless/`，不会影响正点原子整机固件。
+- 这是独立构建目录 `build_headless/`，不会影响完整版固件。
 
 ## 内存与帧率
 
