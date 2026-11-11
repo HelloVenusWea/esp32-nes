@@ -4,7 +4,7 @@
 
 namespace board {
 
-/* 正点原子 ATK-DNESP32S3 板级引脚（与桌面搭子工程实测一致） */
+/* ESP32-S3 板级引脚（当前 PCB 接线） */
 
 // I2C: ES8388 + XL9555
 constexpr gpio_num_t kI2cSda = GPIO_NUM_41;
