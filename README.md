@@ -5,6 +5,19 @@
 
 > 本公开仓库不包含任何 NES ROM。请通过网页上传你合法持有的 `.nes` 文件。
 
+<p align="center">
+  <img src="docs/images/hero.png" alt="ESP32-S3 NES" width="100%">
+</p>
+
+<p align="center">
+  <img alt="ESP-IDF 6.1" src="https://img.shields.io/badge/ESP--IDF-6.1-1B6B7A?style=flat-square">
+  <img alt="ESP32-S3" src="https://img.shields.io/badge/ESP32--S3-240%20MHz-0B1C2C?style=flat-square">
+  <img alt="Firmware" src="https://img.shields.io/badge/firmware-full%20%2B%20headless-37A8B8?style=flat-square">
+  <img alt="Release" src="https://img.shields.io/github/v/release/HelloVenusWea/esp32-nes?style=flat-square">
+</p>
+
+<p align="center"><sub>画面为 homebrew 游戏《Nova the Squirrel》，非商业 ROM</sub></p>
+
 ## 已验证结果
 
 | 项目 | 结果 |
@@ -17,6 +30,27 @@
 | 网络 | STA 入网（DHCP），失败时回退 `NES-XXXX` 配网热点 |
 | 输入 | BLE HID Host 已验证；GamepadSpace-Q34B（ShanWan BM-835）走专用原始 GATT 解析 |
 | 大屏串流 `/stream` | ESP32 无头 58–60 fps；图块 RLE/2bpp + 24 kHz PCM；Chrome 实测 58–60 fps、音频 ~23k/s |
+
+## 三种玩法
+
+<p align="center">
+  <img src="docs/images/device.png" alt="2.4 寸掌机" width="28%">
+  <img src="docs/images/web-ui.png" alt="Web 管理页" width="62%">
+</p>
+
+<p align="center"><sub>2.4″ 本地直绘 · 网页管理/上传 ROM</sub></p>
+
+<p align="center">
+  <img src="docs/images/architecture.png" alt="系统架构" width="76%">
+</p>
+
+<p align="center"><sub>双核分工与 PC/TV 大屏路径</sub></p>
+
+## 性能一览
+
+<p align="center">
+  <img src="docs/images/performance.png" alt="实测帧率" width="84%">
+</p>
 
 ## 硬件
 
